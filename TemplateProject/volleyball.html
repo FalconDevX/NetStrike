@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Volleyball Game</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: peachpuff; }
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        const canvas = document.getElementById("gameCanvas");
+        const ctx = canvas.getContext("2d");
+
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        window.addEventListener("resize", resizeCanvas);
+        resizeCanvas();
+
+        const keys = {};
+        window.addEventListener("keydown", (e) => keys[e.key] = true);
+        window.addEventListener("keyup", (e) => keys[e.key] = false);
+
+        const netHeight = 350;
+        const netX = canvas.width / 2;
+        const ballRespawnHeight = 150;
+        const margin = 50;
+        let scorePlayer1 = 0;
+        let scorePlayer2 = 0;
+
+        class Player {
+            constructor(x, y, color, controls, side) {
+                this.x = x;
+                this.y = y;
+                this.radius = 30;
+                this.color = color;
+                this.velocity = { x: 0, y: 0 };
+                this.acceleration = 0.1;
+                this.maxSpeed = 7.0;
+                this.friction = 0.97
+                this.controls = controls;
+                this.side = side;
+                this.hasNormalShot = true;
+                this.hitCount = 0;
+                this.canHitBall = true;
+            }
+
+            move() {
+                if (keys[this.controls.up]) this.velocity.y -= this.acceleration;
+                if (keys[this.controls.down]) this.velocity.y += this.acceleration;
+                if (keys[this.controls.left]) this.velocity.x -= this.acceleration;
+                if (keys[this.controls.right]) this.velocity.x += this.acceleration;
+
+                this.x += this.velocity.x;
+                this.y += this.velocity.y;
+
+                this.velocity.x *= this.friction;
+                this.velocity.y *= this.friction;
+
+                const dx = ball.x - this.x;
+                const dy = ball.y - this.y;
+                const distanceSquared = dx * dx + dy * dy;
+                const radiusSumSquared = (this.radius + ball.radius) ** 2;
+
+                if (distanceSquared < radiusSumSquared) {
+                    if (keys[this.controls.hit] && this.canHitBall) {
+                        const distance = Math.sqrt(distanceSquared);
+                        const normalX = dx / distance;
+                        const normalY = dy / distance;
+
+                        const force = this.hasNormalShot ? 4 : 8;
+                        ball.velocity.x = normalX * force;
+                        ball.velocity.y = normalY * force;
+
+                        this.hasNormalShot = !this.hasNormalShot;
+                        this.hitCount++;
+                        this.canHitBall = false; 
+                    }
+                } else {
+                    this.canHitBall = true; 
+                }
+
+                if (this.side === "left" && this.x + this.radius > netX - 5) this.x = netX - this.radius - 5;
+                if (this.side === "right" && this.x - this.radius < netX + 5) this.x = netX + this.radius + 5;
+
+                this.x = Math.max(this.radius, Math.min(canvas.width - this.radius, this.x));
+                this.y = Math.max(this.radius, Math.min(canvas.height - this.radius, this.y));
+            }
+
+            draw() {
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fillStyle = this.color;
+                ctx.fill();
+                ctx.closePath();
+            }
+        }
+
+        class Ball {
+            constructor() {
+                this.respawn();
+                this.radius = 15;
+                this.velocity = { x: 0, y: 0 };
+                this.gravity = 0.028;
+                this.friction = 0.997;
+                this.trail = [];
+            }
+
+            update() {
+                this.velocity.y += this.gravity;
+                this.velocity.x *= this.friction;
+                this.velocity.y *= this.friction;
+                this.x += this.velocity.x;
+                this.y += this.velocity.y;
+                
+                this.trail.push({ x: this.x, y: this.y, alpha: 1.0 });
+                if (this.trail.length > 10) this.trail.shift();
+                
+                if (this.x - this.radius < netX + 5 && this.x + this.radius > netX - 5 && this.y + this.radius > canvas.height - netHeight) {
+                    this.velocity.x *= -0.85;
+                }
+                
+                if (this.y + this.radius >= canvas.height) {
+                    if (this.x < netX) scorePlayer2++;
+                    else scorePlayer1++;
+                    this.respawn(this.x < netX ? "right" : "left");
+                    player1.hitCount = 0;
+                    player2.hitCount = 0;
+                }
+                
+                if (this.x - this.radius < 0 || this.x + this.radius > canvas.width) {
+                    this.velocity.x *= -0.85;
+                    this.x = Math.max(this.radius, Math.min(canvas.width - this.radius, this.x));
+                }
+                if (this.y - this.radius < 0) {
+                    this.velocity.y *= -0.85;
+                    this.y = this.radius;
+                }
+            }
+
+            respawn(side) {
+                const minDistanceFromNet = 100; 
+                const minDistanceFromWall = 50; 
+
+                let x;
+                if (side === "left") {
+                    x = Math.random() * (netX - minDistanceFromNet - margin) + margin;
+                    x = Math.max(x, minDistanceFromWall); 
+                } else {
+                    x = Math.random() * (canvas.width - netX - minDistanceFromNet - margin) + netX + minDistanceFromNet;
+                    x = Math.min(x, canvas.width - minDistanceFromWall); 
+                }
+
+                this.x = x;
+                this.y = ballRespawnHeight;
+                this.velocity = { x: 0, y: 0 };
+                this.trail = [];
+                this.side = side;
+
+                player1.hasNormalShot = true;
+                player2.hasNormalShot = true;
+            }
+
+            draw() {
+                for (let i = 0; i < this.trail.length; i++) {
+                    let t = this.trail[i];
+                    ctx.beginPath();
+                    ctx.arc(t.x, t.y, this.radius * (0.5 + i / 20), 0, Math.PI * 2);
+                    ctx.fillStyle = `rgba(255, 69, 0, ${t.alpha})`;
+                    ctx.fill();
+                    ctx.closePath();
+                    t.alpha *= 0.9;
+                }
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fillStyle = "orange";
+                ctx.fill();
+                ctx.closePath();
+            }
+}
+
+        function drawNet() {
+            ctx.fillStyle = "black";
+            ctx.fillRect(netX - 2, canvas.height - netHeight, 4, netHeight);
+        }
+
+        function drawScore() {
+            ctx.font = "24px Arial";
+            ctx.fillStyle = "black";
+            ctx.fillText(`Player 1: ${scorePlayer1}`, 20, 30);
+            ctx.fillText(`Player 2: ${scorePlayer2}`, canvas.width - 140, 30);
+            ctx.fillText(`Hits: ${player1.hitCount}`, 20, 120);
+            ctx.fillText(`Hits: ${player2.hitCount}`, canvas.width - 140, 120);
+
+            ctx.fillStyle = player1.hasNormalShot ? "green" : "black";
+            ctx.fillText("Normal Shot", 20, 60);
+            ctx.fillStyle = !player1.hasNormalShot ? "green" : "black";
+            ctx.fillText("Power Shot", 20, 90);
+            
+            ctx.fillStyle = player2.hasNormalShot ? "green" : "black";
+            ctx.fillText("Normal Shot", canvas.width - 140, 60);
+            ctx.fillStyle = !player2.hasNormalShot ? "green" : "black";
+            ctx.fillText("Power Shot", canvas.width - 140, 90);
+        }
+
+        const player1 = new Player(100, canvas.height / 2, "blue", { up: "w", down: "s", left: "a", right: "d", hit: " " }, "left");
+        const player2 = new Player(canvas.width - 100, canvas.height / 2, "red", { up: "ArrowUp", down: "ArrowDown", left: "ArrowLeft", right: "ArrowRight", hit: "Enter" }, "right");
+        const ball = new Ball();
+
+        function gameLoop() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            drawNet();
+            drawScore();
+            player1.move();
+            player2.move();
+            ball.update();
+
+            player1.draw();
+            player2.draw();
+            ball.draw();
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        gameLoop();
+    </script>
+</body>
+</html>
