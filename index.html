@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gra Multiplayer - Kulki</title>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <style>
+        body { 
+            display: flex; 
+            justify-content: center; 
+            align-items: center; 
+            flex-direction: row; 
+            margin: 0; 
+            background: #222; 
+            color: white; 
+            height: 100vh;
+        }
+
+        #players-list-container {
+            width: 200px;
+            height: 600px;
+            background: #333;
+            padding: 10px;
+            border: 2px solid black;
+            overflow-y: auto;
+            margin-right: 20px;
+        }
+
+        #players-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        .player-item {
+            padding: 8px;
+            margin: 5px 0;
+            background: #222;
+            color: white;
+            border-left: 4px solid transparent;
+        }
+
+        .glowing {
+            border-left-color: yellow !important;
+            font-weight: bold;
+        }
+
+        #game-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        canvas { 
+            background: #F57C00; 
+            display: block; 
+            margin: auto; 
+            border: 4px solid black;
+        }
+
+        #chat-container {
+            width: 300px;
+            height: 600px;
+            margin-left: 20px;
+            display: flex;
+            flex-direction: column;
+            background: #333;
+            border: 2px solid black;
+            padding: 10px;
+            overflow: hidden;
+        }
+
+        #messages { 
+            flex: 1; 
+            overflow-y: auto; 
+            background: #222;
+            padding: 10px; 
+            border: 1px solid white;
+        }
+
+        #input-container { 
+            display: flex; 
+            margin-top: 5px;
+        }
+
+        #message-input { 
+            flex: 1; 
+            padding: 5px; 
+        }
+
+        #send-button { 
+            padding: 5px; 
+            cursor: pointer; 
+        }
+
+        #start-screen {
+            position: absolute; 
+            top: 0; left: 0; 
+            width: 100vw; height: 100vh; 
+            background: rgba(0, 0, 0, 0.8); 
+            color: white; 
+            display: flex; 
+            flex-direction: column; 
+            align-items: center; 
+            justify-content: center;
+        }
+
+        #start-screen input, #start-screen button {
+            margin: 5px; 
+            padding: 10px;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Lista graczy -->
+    <div id="players-list-container">
+        <h3>Lista Graczy 🏐</h3>
+        <ul id="players-list"></ul>
+    </div>
+
+    <!-- Ekran startowy -->
+    <div id="start-screen">
+        <h2>Wybierz Nick i Kolor Piłki 🎨</h2>
+        <input type="text" id="nickname" placeholder="Twój nick">
+        <input type="color" id="color-picker" value="#ff0000">
+        <button id="start-button">Dołącz do gry!</button>
+    </div>
+
+    <!-- Gra -->
+    <div id="game-container">
+        <h2>Gra Multiplayer - Kulki 🏐</h2>
+        <canvas id="gameCanvas"></canvas>
+    </div>
+
+    <!-- Chat -->
+    <div id="chat-container">
+        <div id="messages"></div>
+        <div id="input-container">
+            <input type="text" id="message-input" placeholder="Napisz wiadomość...">
+            <button id="send-button">Send</button>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        const canvas = document.getElementById("gameCanvas");
+        const ctx = canvas.getContext("2d");
+
+        const startScreen = document.getElementById("start-screen");
+        const nicknameInput = document.getElementById("nickname");
+        const colorPicker = document.getElementById("color-picker");
+        const startButton = document.getElementById("start-button");
+
+        let players = {};
+        let keys = {};
+        let playerInfo = {};
+        let glowingPlayers = {};
+        let velocity = { x: 0, y: 0 };
+        let ball = { x: 0, y: 0, radius: 10 };
+
+        canvas.width = 900;
+        canvas.height = 600;
+        const middleLineX = canvas.width / 2;
+
+        startButton.addEventListener("click", () => {
+            const nickname = nicknameInput.value.trim() || `Gracz_${Math.floor(Math.random() * 1000)}`;
+            const color = colorPicker.value;
+            playerInfo = { nickname, color };
+            socket.emit("joinGame", playerInfo);
+            startScreen.style.display = "none";
+        });
+
+        socket.on("updatePlayers", (data) => {
+            players = data.players;
+            spectators = data.spectators;
+            updatePlayersList();
+            draw();
+        });
+
+        document.addEventListener("keydown", (event) => {
+            keys[event.key] = true;
+            if (event.key === " ") {
+                if (!glowingPlayers[socket.id]) {
+                    glowingPlayers[socket.id] = true;
+                    socket.emit("glow", true);
+                }
+            }
+        });
+
+        document.addEventListener("keyup", (event) => {
+            delete keys[event.key];
+            if (event.key === " ") {
+                delete glowingPlayers[socket.id];
+                socket.emit("glow", false);
+            }
+        });
+
+
+        function updateMovement() {
+            let acceleration = { x: 0, y: 0 };
+            let speed = 0.2; 
+
+            if (keys["w"] || keys["ArrowUp"]) acceleration.y -= speed;
+            if (keys["s"] || keys["ArrowDown"]) acceleration.y += speed;
+            if (keys["a"] || keys["ArrowLeft"]) acceleration.x -= speed;
+            if (keys["d"] || keys["ArrowRight"]) acceleration.x += speed;
+
+            velocity.x += acceleration.x;
+            velocity.y += acceleration.y;
+
+            let friction = 0.9;
+            velocity.x *= friction;
+            velocity.y *= friction;
+
+            if (Math.abs(velocity.x) < 0.1) velocity.x = 0;
+            if (Math.abs(velocity.y) < 0.1) velocity.y = 0;
+
+            if (velocity.x !== 0 || velocity.y !== 0) {
+                socket.emit("move", { x: velocity.x, y: velocity.y });
+            }
+        }
+
+        setInterval(updateMovement, 5);
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = "black";
+            ctx.fillRect(middleLineX - 2, canvas.height - 250, 4, 250);
+
+            ctx.fillStyle = "white";
+            ctx.beginPath();
+            ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = "black";
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            for (const id in players) {
+                const p = players[id];
+
+                if (glowingPlayers[id]) {
+                    ctx.strokeStyle = "yellow";
+                    ctx.lineWidth = 4;
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, 20, 0, Math.PI * 2);
+                    ctx.stroke();
+                }
+
+                ctx.fillStyle = p.color;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, 18, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.fillStyle = "black";
+                ctx.font = "14px Arial";
+                ctx.fillText(p.nickname, p.x - 20, p.y - 25);
+            }
+        }
+
+        function updatePlayersList() {
+            const playersList = document.getElementById("players-list");
+            playersList.innerHTML = "<h4>Aktywni gracze</h4>";
+
+            for (const id in players) {
+                const p = players[id];
+                const playerItem = document.createElement("li");
+                playerItem.classList.add("player-item");
+                playerItem.textContent = `${p.nickname} (Gra)`;
+                playerItem.style.borderLeftColor = p.color;
+                playersList.appendChild(playerItem);
+            }
+
+            // Dodanie obserwatorów
+            if (spectators.length > 0) {
+                const spectatorHeader = document.createElement("h4");
+                spectatorHeader.textContent = "Obserwatorzy";
+                playersList.appendChild(spectatorHeader);
+
+                spectators.forEach(spectator => {
+                    const spectatorItem = document.createElement("li");
+                    spectatorItem.classList.add("player-item");
+                    spectatorItem.textContent = `${spectator.nickname} (Obserwuje)`;
+                    spectatorItem.style.borderLeftColor = spectator.color;
+                    playersList.appendChild(spectatorItem);
+                });
+            }
+        }
+
+        socket.on("updateBall", (data) => {
+                ball = data;
+                draw();
+        });
+
+        socket.on("chatMessage", (data) => {
+            const msgElement = document.createElement("p");
+            msgElement.textContent = data;
+            document.getElementById("messages").appendChild(msgElement);
+        });
+
+        function sendMessage() {
+            const message = document.getElementById("message-input").value.trim();
+            if (message !== "") {
+                socket.emit("chatMessage", message);
+                document.getElementById("message-input").value = "";
+            }
+        }
+
+        document.getElementById("send-button").addEventListener("click", sendMessage);
+        document.getElementById("message-input").addEventListener("keypress", (event) => {
+            if (event.key === "Enter") sendMessage();
+        });
+        document.addEventListener("keydown", (event) => {
+            if (event.key === " ") {
+                socket.emit("hitBall");
+            }
+        });
+
+
+
+
+    </script>
+
+</body>
+</html>
+    
