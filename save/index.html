@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gra Multiplayer - Kulki</title>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <style>
+        body { 
+            display: flex; 
+            justify-content: center; 
+            align-items: center; 
+            flex-direction: row; 
+            margin: 0; 
+            background: #222; 
+            color: white; 
+            height: 100vh;
+            font-family: Arial, sans-serif;
+        }
+
+        #players-list-container {
+            width: 200px;
+            height: 600px;
+            background: #333;
+            padding: 10px;
+            border: 2px solid black;
+            overflow-y: auto;
+            margin-right: 20px;
+        }
+
+        #players-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        .player-item {
+            padding: 8px;
+            margin: 5px 0;
+            background: #222;
+            color: white;
+            border-left: 4px solid transparent;
+        }
+
+        #game-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        canvas { 
+            background: #F57C00; 
+            display: block; 
+            margin: auto; 
+            border: 4px solid black;
+        }
+
+        #chat-container {
+            width: 300px;
+            height: 600px;
+            margin-left: 20px;
+            display: flex;
+            flex-direction: column;
+            background: #333;
+            border: 2px solid black;
+            padding: 10px;
+            overflow: hidden;
+        }
+
+        #messages { 
+            flex: 1; 
+            overflow-y: auto; 
+            background: #222;
+            padding: 10px; 
+            border: 1px solid white;
+        }
+
+        #input-container { 
+            display: flex; 
+            margin-top: 5px;
+        }
+
+        #message-input { 
+            flex: 1; 
+            padding: 5px; 
+        }
+
+        #send-button { 
+            padding: 5px; 
+            cursor: pointer; 
+        }
+
+        #start-screen {
+            position: absolute; 
+            top: 0; left: 0; 
+            width: 100vw; height: 100vh; 
+            background: rgba(0, 0, 0, 0.8); 
+            color: white; 
+            display: flex; 
+            flex-direction: column; 
+            align-items: center; 
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        #start-screen input, #start-screen button {
+            margin: 5px; 
+            padding: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div id="players-list-container">
+        <h3>Lista Graczy 🏐</h3>
+        <ul id="players-list"></ul>
+    </div>
+
+    <div id="start-screen">
+        <h2>Wybierz Nick i Kolor Piłki 🎨</h2>
+        <input type="text" id="nickname" placeholder="Twój nick">
+        <input type="color" id="color-picker" value="#ff0000">
+        <button id="start-button">Dołącz do gry!</button>
+    </div>
+
+    <div id="game-container">
+        <h2>Gra Multiplayer - Kulki 🏐</h2>
+        <canvas id="gameCanvas"></canvas>
+    </div>
+
+    <div id="chat-container">
+        <div id="messages"></div>
+        <div id="input-container">
+            <input type="text" id="message-input" placeholder="Napisz wiadomość...">
+            <button id="send-button">Wyślij</button>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        const canvas = document.getElementById("gameCanvas");
+        const ctx = canvas.getContext("2d");
+
+        const startScreen = document.getElementById("start-screen");
+        const nicknameInput = document.getElementById("nickname");
+        const colorPicker = document.getElementById("color-picker");
+        const startButton = document.getElementById("start-button");
+
+        let players = {};
+        let keys = {};
+        let playerInfo = {};
+        let glowingPlayers = {};
+        let spectators = [];
+        let velocity = { x: 0, y: 0 };
+        let acceleration = 0.4;  // Jak szybko gracz przyspiesza
+        let friction = 0.9;      // Jak szybko traci prędkość
+        let ball = { x: 0, y: 0, radius: 10 };
+
+        const interpolationFactor = 0.2;
+        let interpolatedPlayers = {};
+        let interpolatedBall = { x: 0, y: 0, radius: 10, trail: [] };
+
+        canvas.width = 900;
+        canvas.height = 600;
+        const middleLineX = canvas.width / 2;
+
+        startButton.addEventListener("click", () => {
+            const nickname = nicknameInput.value.trim() || `Gracz_${Math.floor(Math.random() * 1000)}`;
+            const color = colorPicker.value;
+            playerInfo = { nickname, color };
+            socket.emit("joinGame", playerInfo);
+            startScreen.style.display = "none";
+        });
+
+        socket.on("updatePlayers", (data) => {
+            players = data.players;
+            spectators = data.spectators;
+            updatePlayersList();
+        });
+
+        function updatePlayersList() {
+            const playersList = document.getElementById("players-list");
+            playersList.innerHTML = "<h4>Aktywni gracze</h4>";
+
+            for (const id in players) {
+                const p = players[id];
+                const playerItem = document.createElement("li");
+                playerItem.classList.add("player-item");
+                playerItem.textContent = `${p.nickname} (Gra)`;
+                playerItem.style.borderLeftColor = p.color;
+                playersList.appendChild(playerItem);
+            }
+
+            if (spectators.length > 0) {
+                const spectatorHeader = document.createElement("h4");
+                spectatorHeader.textContent = "Obserwatorzy";
+                playersList.appendChild(spectatorHeader);
+
+                spectators.forEach(spectator => {
+                    const spectatorItem = document.createElement("li");
+                    spectatorItem.classList.add("player-item");
+                    spectatorItem.textContent = `${spectator.nickname} (Obserwuje)`;
+                    spectatorItem.style.borderLeftColor = spectator.color;
+                    playersList.appendChild(spectatorItem);
+                });
+            }
+        }
+
+        document.addEventListener("keydown", (event) => {
+            keys[event.key] = true;
+            if (event.key === " ") {
+                if (!glowingPlayers[socket.id]) {
+                    glowingPlayers[socket.id] = true;
+                    socket.emit("glow", true); // Emituj stan 'glow' przy wciśnięciu
+                }
+            }
+        });
+
+        document.addEventListener("keyup", (event) => { 
+            delete keys[event.key];
+            if (event.key === " ") {
+                delete glowingPlayers[socket.id];
+                socket.emit("glow", false); // Wyłącz 'glow' po puszczeniu
+            }
+        });
+
+        function updateMovement() {
+            let dx = 0;
+            let dy = 0;
+
+            if (keys["w"] || keys["ArrowUp"]) dy = -1;
+            if (keys["s"] || keys["ArrowDown"]) dy = 1;
+            if (keys["a"] || keys["ArrowLeft"]) dx = -1;
+            if (keys["d"] || keys["ArrowRight"]) dx = 1;
+
+            // Normalizacja ruchu po przekątnej
+            if (dx !== 0 && dy !== 0) {
+                dx *= 0.707;
+                dy *= 0.707;
+            }
+
+            // 🔹 Obliczanie fizyki ruchu (na kliencie)
+            velocity.x += dx * acceleration;
+            velocity.y += dy * acceleration;
+
+            velocity.x *= friction;
+            velocity.y *= friction;
+
+            if (Math.abs(velocity.x) < 0.01) velocity.x = 0;
+            if (Math.abs(velocity.y) < 0.01) velocity.y = 0;
+
+            // 🔥 Aktualizacja pozycji lokalnie
+            if (playerInfo.id) {
+                players[playerInfo.id].x += velocity.x;
+                players[playerInfo.id].y += velocity.y;
+
+                // Wysyłanie tylko pozycji do serwera
+                socket.emit("move", { 
+                    x: players[playerInfo.id].x, 
+                    y: players[playerInfo.id].y 
+                });
+            }
+        }
+
+        let lastMovementTime = performance.now();
+        setInterval(updateMovement, 5);
+
+        function interpolatePositions() {
+            for (const id in players) {
+                if (!interpolatedPlayers[id]) {
+                    interpolatedPlayers[id] = { ...players[id] };
+                } else {
+                    const lerpFactor = interpolationFactor * (performance.now() - lastFrameTime) / 1000 * 60;
+                    interpolatedPlayers[id].x += (players[id].x - interpolatedPlayers[id].x)*lerpFactor;
+                    interpolatedPlayers[id].y += (players[id].y - interpolatedPlayers[id].y)*lerpFactor;
+                }
+            }
+
+            interpolatedBall.x += (ball.x - interpolatedBall.x) * interpolationFactor * (performance.now() - lastFrameTime) / 1000 * 60;
+            interpolatedBall.y += (ball.y - interpolatedBall.y) * interpolationFactor * (performance.now() - lastFrameTime) / 1000 * 60;
+
+            draw();
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            ctx.fillStyle = "blue";
+            ctx.beginPath();
+            ctx.arc(900, 0, 5, 0, Math.PI * 2);
+            ctx.fill();
+
+            if (interpolatedBall.hidden) {
+                return;
+            }
+            
+            // 🔥 **Rysowanie śladu szarego ognia**
+            for (let i = 0; i < interpolatedBall.trail.length; i += 3) { // Mniej okręgów dla rozrzedzonego efektu
+                let t = interpolatedBall.trail[i];
+
+                let alpha = i / interpolatedBall.trail.length; // Najbardziej przezroczyste przy piłce, najmniej przezroczyste dalej
+                let sizeFactor = 0.5 + (i / interpolatedBall.trail.length) * 0.5; // Najmniejszy okrąg przy piłce, największy na końcu
+
+                ctx.beginPath();
+                ctx.arc(t.x, t.y, interpolatedBall.radius * sizeFactor, 0, Math.PI * 2);
+                ctx.fillStyle = `rgba(153, 76, 0, ${alpha})`; // Szary dym, bardziej widoczny dalej
+                ctx.fill();
+                ctx.closePath();
+            }
+
+            // Linia środkowa
+            ctx.fillStyle = "black";
+            ctx.fillRect(middleLineX - 2, canvas.height - 250, 4, 250);
+            
+            // Piłka
+            ctx.fillStyle = "white";
+            ctx.beginPath();
+            ctx.arc(interpolatedBall.x, interpolatedBall.y, interpolatedBall.radius, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = "black";
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            // Gracze
+            for (const id in interpolatedPlayers) {
+                const p = interpolatedPlayers[id];
+
+                // Podświetlenie gracza
+                if (glowingPlayers[id]) {
+                    ctx.strokeStyle = "yellow";
+                    ctx.lineWidth = 4;
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, 20, 0, Math.PI * 2);
+                    ctx.stroke();
+                }
+
+                // Kolor gracza
+                ctx.fillStyle = p.color;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, 18, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Nick gracza
+                ctx.fillStyle = "black";
+                ctx.font = "14px Arial";
+                ctx.fillText(p.nickname, p.x - 20, p.y - 25);
+            }
+        }
+
+        let lastFrameTime = performance.now();
+        function gameLoop(currentTime) {
+            const deltaTime = (currentTime - lastFrameTime) / 1000;
+            const clampedDeltaTime = Math.min(deltaTime, 0.1);
+
+            interpolatePositions();
+            lastFrameTime = currentTime;
+            requestAnimationFrame(gameLoop);
+        }
+        
+        ball.trail = [];
+
+        socket.on("updateBall", (data) => {
+            ball = data;
+            interpolatedBall.trail.push({ x: interpolatedBall.x, y: interpolatedBall.y });
+            if (interpolatedBall.trail.length > 15) interpolatedBall.trail.shift();
+        });
+
+        socket.on("forceResetBall", () => {
+            interpolatedBall.x = ball.x;
+            interpolatedBall.y = ball.y;
+            interpolatedBall.trail = []; // Resetujemy ślad, aby nie wyglądał dziwnie
+        });
+
+
+        function sendMessage() {
+            const message = document.getElementById("message-input").value.trim();
+            if (message !== "") {
+                socket.emit("chatMessage", message);
+                document.getElementById("message-input").value = "";
+            }
+        }
+
+        document.getElementById("send-button").addEventListener("click", sendMessage);
+        document.getElementById("message-input").addEventListener("keypress", (event) => {
+            if (event.key === "Enter") sendMessage();
+        });
+
+        socket.on("chatMessage", (data) => {
+            const msgElement = document.createElement("p");
+            msgElement.textContent = data;
+            document.getElementById("messages").appendChild(msgElement);
+            // Automatyczne przewijanie na dół
+            const messagesContainer = document.getElementById("messages");
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        });
+
+        requestAnimationFrame(gameLoop);
+    </script>
+</body>
+</html>

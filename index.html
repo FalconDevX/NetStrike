@@ -15,6 +15,7 @@
             background: #222; 
             color: white; 
             height: 100vh;
+            font-family: Arial, sans-serif;
         }
 
         #players-list-container {
@@ -39,11 +40,6 @@
             background: #222;
             color: white;
             border-left: 4px solid transparent;
-        }
-
-        .glowing {
-            border-left-color: yellow !important;
-            font-weight: bold;
         }
 
         #game-container {
@@ -94,6 +90,14 @@
             cursor: pointer; 
         }
 
+        #arrow-indicator {
+            position: absolute;
+            top: 10px;
+            font-size: 30px;
+            color: white;
+            display: none;
+        }
+
         #start-screen {
             position: absolute; 
             top: 0; left: 0; 
@@ -104,6 +108,22 @@
             flex-direction: column; 
             align-items: center; 
             justify-content: center;
+            z-index: 1000;
+        }
+
+        #scoreboard-container {
+            position: absolute;
+            top: 10px; /* Odległość od góry ekranu */
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.7); /* Półprzezroczyste tło */
+            color: white;
+            padding: 10px 20px;
+            border-radius: 10px;
+            font-size: 24px;
+            font-weight: bold;
+            text-align: center;
+            z-index: 1000;
         }
 
         #start-screen input, #start-screen button {
@@ -113,14 +133,15 @@
     </style>
 </head>
 <body>
-
-    <!-- Lista graczy -->
     <div id="players-list-container">
         <h3>Lista Graczy 🏐</h3>
         <ul id="players-list"></ul>
     </div>
 
-    <!-- Ekran startowy -->
+    <div id="arrow-indicator">⬆</div>
+
+    
+
     <div id="start-screen">
         <h2>Wybierz Nick i Kolor Piłki 🎨</h2>
         <input type="text" id="nickname" placeholder="Twój nick">
@@ -128,18 +149,17 @@
         <button id="start-button">Dołącz do gry!</button>
     </div>
 
-    <!-- Gra -->
     <div id="game-container">
         <h2>Gra Multiplayer - Kulki 🏐</h2>
+        <h3 id="scoreboard">Lewy: 0 | Prawy: 0</h3>
         <canvas id="gameCanvas"></canvas>
     </div>
 
-    <!-- Chat -->
     <div id="chat-container">
         <div id="messages"></div>
         <div id="input-container">
             <input type="text" id="message-input" placeholder="Napisz wiadomość...">
-            <button id="send-button">Send</button>
+            <button id="send-button">Wyślij</button>
         </div>
     </div>
 
@@ -152,13 +172,24 @@
         const nicknameInput = document.getElementById("nickname");
         const colorPicker = document.getElementById("color-picker");
         const startButton = document.getElementById("start-button");
+        const arrow = document.getElementById("arrow-indicator");
+        const gameContainer = document.getElementById("game-container");
+        const canvasRect = canvas.getBoundingClientRect(); // Pobranie pozycji boiska na ekranie
+
 
         let players = {};
         let keys = {};
         let playerInfo = {};
         let glowingPlayers = {};
+        let spectators = [];
         let velocity = { x: 0, y: 0 };
+        let acceleration = 0.2;  // Jak szybko gracz przyspiesza
+        let friction = 0.98;      // Jak szybko traci prędkość
         let ball = { x: 0, y: 0, radius: 10 };
+
+        const interpolationFactor = 0.2;
+        let interpolatedPlayers = {};
+        let interpolatedBall = { x: 0, y: 0, radius: 10, trail: [] };
 
         canvas.width = 900;
         canvas.height = 600;
@@ -176,88 +207,12 @@
             players = data.players;
             spectators = data.spectators;
             updatePlayersList();
-            draw();
         });
 
-        document.addEventListener("keydown", (event) => {
-            keys[event.key] = true;
-            if (event.key === " ") {
-                if (!glowingPlayers[socket.id]) {
-                    glowingPlayers[socket.id] = true;
-                    socket.emit("glow", true);
-                }
-            }
+        socket.on("updateScores", (scores) => {
+            document.getElementById("scoreboard").textContent = `Lewy: ${scores.left} | Prawy: ${scores.right}`;
         });
 
-        document.addEventListener("keyup", (event) => {
-            delete keys[event.key];
-            if (event.key === " ") {
-                delete glowingPlayers[socket.id];
-                socket.emit("glow", false);
-            }
-        });
-
-
-        function updateMovement() {
-            let acceleration = { x: 0, y: 0 };
-            let speed = 0.2; 
-
-            if (keys["w"] || keys["ArrowUp"]) acceleration.y -= speed;
-            if (keys["s"] || keys["ArrowDown"]) acceleration.y += speed;
-            if (keys["a"] || keys["ArrowLeft"]) acceleration.x -= speed;
-            if (keys["d"] || keys["ArrowRight"]) acceleration.x += speed;
-
-            velocity.x += acceleration.x;
-            velocity.y += acceleration.y;
-
-            let friction = 0.9;
-            velocity.x *= friction;
-            velocity.y *= friction;
-
-            if (Math.abs(velocity.x) < 0.1) velocity.x = 0;
-            if (Math.abs(velocity.y) < 0.1) velocity.y = 0;
-
-            if (velocity.x !== 0 || velocity.y !== 0) {
-                socket.emit("move", { x: velocity.x, y: velocity.y });
-            }
-        }
-
-        setInterval(updateMovement, 5);
-
-        function draw() {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            ctx.fillStyle = "black";
-            ctx.fillRect(middleLineX - 2, canvas.height - 250, 4, 250);
-
-            ctx.fillStyle = "white";
-            ctx.beginPath();
-            ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.strokeStyle = "black";
-            ctx.lineWidth = 2;
-            ctx.stroke();
-
-            for (const id in players) {
-                const p = players[id];
-
-                if (glowingPlayers[id]) {
-                    ctx.strokeStyle = "yellow";
-                    ctx.lineWidth = 4;
-                    ctx.beginPath();
-                    ctx.arc(p.x, p.y, 20, 0, Math.PI * 2);
-                    ctx.stroke();
-                }
-
-                ctx.fillStyle = p.color;
-                ctx.beginPath();
-                ctx.arc(p.x, p.y, 18, 0, Math.PI * 2);
-                ctx.fill();
-
-                ctx.fillStyle = "black";
-                ctx.font = "14px Arial";
-                ctx.fillText(p.nickname, p.x - 20, p.y - 25);
-            }
-        }
 
         function updatePlayersList() {
             const playersList = document.getElementById("players-list");
@@ -272,7 +227,6 @@
                 playersList.appendChild(playerItem);
             }
 
-            // Dodanie obserwatorów
             if (spectators.length > 0) {
                 const spectatorHeader = document.createElement("h4");
                 spectatorHeader.textContent = "Obserwatorzy";
@@ -288,16 +242,181 @@
             }
         }
 
-        socket.on("updateBall", (data) => {
-                ball = data;
-                draw();
+        document.addEventListener("keydown", (event) => {
+            keys[event.key] = true;
+            if (event.key === " ") {
+                if (!glowingPlayers[socket.id]) {
+                    glowingPlayers[socket.id] = true;
+                    socket.emit("glow", true); // Emituj stan 'glow' przy wciśnięciu
+                }
+            }
         });
 
-        socket.on("chatMessage", (data) => {
-            const msgElement = document.createElement("p");
-            msgElement.textContent = data;
-            document.getElementById("messages").appendChild(msgElement);
+        document.addEventListener("keyup", (event) => { 
+            delete keys[event.key];
+            if (event.key === " ") {
+                delete glowingPlayers[socket.id];
+                socket.emit("glow", false); // Wyłącz 'glow' po puszczeniu
+            }
         });
+
+        function awardPoint(winnerSide) {
+            scores[winnerSide]++;  // Dodaj punkt dla zwycięzcy
+
+            io.emit("updateScores", scores); // Wyślij nowe wyniki do klientów
+            resetBall(winnerSide);
+        }
+
+
+        function updateArrowPosition() {
+            if (ball.y < 0) { 
+                arrow.style.display = "block"; 
+                
+                // Pozycja strzałki zgodnie z X piłki w obrębie boiska
+                arrow.style.left = `${canvas.offsetLeft + ball.x -10}px`;
+                arrow.style.top = `${canvas.offsetTop - 20}px`; // Umieszczamy strzałkę lekko nad boiskiem
+            } else {
+                arrow.style.display = "none";
+            }
+        }
+
+        setInterval(updateArrowPosition, 30);
+
+        function updateMovement() {
+            let dx = 0;
+            let dy = 0;
+
+            if (keys["w"] || keys["ArrowUp"]) dy = -1;
+            if (keys["s"] || keys["ArrowDown"]) dy = 1;
+            if (keys["a"] || keys["ArrowLeft"]) dx = -1;
+            if (keys["d"] || keys["ArrowRight"]) dx = 1;
+
+            // Normalizacja ruchu po przekątnej
+            if (dx !== 0 && dy !== 0) {
+                dx *= 0.707;
+                dy *= 0.707;
+            }
+
+            const speed = 6; // Szybsze poruszanie się
+
+            velocity.x = dx * speed;
+            velocity.y = dy * speed;
+
+            // Natychmiastowe zatrzymanie po puszczeniu klawisza
+            if (dx === 0) velocity.x = 0;
+            if (dy === 0) velocity.y = 0;
+
+            // Wysyłanie danych do serwera, tylko gdy gracz się porusza
+            if (velocity.x !== 0 || velocity.y !== 0) {
+                socket.emit("move", { x: velocity.x, y: velocity.y });
+            }
+        }
+
+
+        let lastMovementTime = performance.now();
+        setInterval(updateMovement, 3);
+
+        function interpolatePositions() {
+            for (const id in players) {
+                if (!interpolatedPlayers[id]) {
+                    interpolatedPlayers[id] = { ...players[id] };
+                } else {
+                    const lerpFactor = interpolationFactor * (performance.now() - lastFrameTime) / 1000 * 60;
+                    interpolatedPlayers[id].x += (players[id].x - interpolatedPlayers[id].x)*lerpFactor;
+                    interpolatedPlayers[id].y += (players[id].y - interpolatedPlayers[id].y)*lerpFactor;
+                }
+            }
+
+            interpolatedBall.x += (ball.x - interpolatedBall.x) * interpolationFactor * (performance.now() - lastFrameTime) / 1000 * 60;
+            interpolatedBall.y += (ball.y - interpolatedBall.y) * interpolationFactor * (performance.now() - lastFrameTime) / 1000 * 60;
+
+            draw();
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height)
+
+            if (interpolatedBall.hidden) {
+                return;
+            }
+            
+            // 🔥 **Rysowanie śladu szarego ognia**
+            for (let i = 0; i < interpolatedBall.trail.length; i += 3) { // Mniej okręgów dla rozrzedzonego efektu
+                let t = interpolatedBall.trail[i];
+
+                let alpha = i / interpolatedBall.trail.length; // Najbardziej przezroczyste przy piłce, najmniej przezroczyste dalej
+                let sizeFactor = 0.5 + (i / interpolatedBall.trail.length) * 0.5; // Najmniejszy okrąg przy piłce, największy na końcu
+
+                ctx.beginPath();
+                ctx.arc(t.x, t.y, interpolatedBall.radius * sizeFactor, 0, Math.PI * 2);
+                ctx.fillStyle = `rgba(153, 76, 0, ${alpha})`; // Szary dym, bardziej widoczny dalej
+                ctx.fill();
+                ctx.closePath();
+            }
+
+            // Linia środkowa
+            ctx.fillStyle = "black";
+            ctx.fillRect(middleLineX - 2, canvas.height - 250, 8, 250);
+            
+            // Piłka
+            ctx.fillStyle = "white";
+            ctx.beginPath();
+            ctx.arc(interpolatedBall.x, interpolatedBall.y, interpolatedBall.radius, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = "black";
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            // Gracze
+            for (const id in interpolatedPlayers) {
+                const p = interpolatedPlayers[id];
+
+                // Podświetlenie gracza
+                if (glowingPlayers[id]) {
+                    ctx.strokeStyle = "yellow";
+                    ctx.lineWidth = 4;
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, 20, 0, Math.PI * 2);
+                    ctx.stroke();
+                }
+
+                // Kolor gracza
+                ctx.fillStyle = p.color;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, 18, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Nick gracza
+                ctx.fillStyle = "black";
+                ctx.font = "14px Arial";
+                ctx.fillText(p.nickname, p.x - 20, p.y - 25);
+            }
+        }
+
+        let lastFrameTime = performance.now();
+        function gameLoop(currentTime) {
+            const deltaTime = (currentTime - lastFrameTime) / 1000;
+            const clampedDeltaTime = Math.min(deltaTime, 0.1);
+
+            interpolatePositions();
+            lastFrameTime = currentTime;
+            requestAnimationFrame(gameLoop);
+        }
+        
+        ball.trail = [];
+
+        socket.on("updateBall", (data) => {
+            ball = data;
+            interpolatedBall.trail.push({ x: interpolatedBall.x, y: interpolatedBall.y });
+            if (interpolatedBall.trail.length > 15) interpolatedBall.trail.shift();
+        });
+
+        socket.on("forceResetBall", () => {
+            interpolatedBall.x = ball.x;
+            interpolatedBall.y = ball.y;
+            interpolatedBall.trail = []; // Resetujemy ślad, aby nie wyglądał dziwnie
+        });
+
 
         function sendMessage() {
             const message = document.getElementById("message-input").value.trim();
@@ -311,17 +430,17 @@
         document.getElementById("message-input").addEventListener("keypress", (event) => {
             if (event.key === "Enter") sendMessage();
         });
-        document.addEventListener("keydown", (event) => {
-            if (event.key === " ") {
-                socket.emit("hitBall");
-            }
+
+        socket.on("chatMessage", (data) => {
+            const msgElement = document.createElement("p");
+            msgElement.textContent = data;
+            document.getElementById("messages").appendChild(msgElement);
+            // Automatyczne przewijanie na dół
+            const messagesContainer = document.getElementById("messages");
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
         });
 
-
-
-
+        requestAnimationFrame(gameLoop);
     </script>
-
 </body>
 </html>
-    
